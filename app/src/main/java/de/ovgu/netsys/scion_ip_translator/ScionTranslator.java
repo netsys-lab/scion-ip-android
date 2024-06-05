@@ -1,6 +1,9 @@
 package de.ovgu.netsys.scion_ip_translator;
 
+import static android.system.OsConstants.AF_INET;
+
 import android.app.PendingIntent;
+import android.content.SharedPreferences;
 import android.net.VpnService;
 import android.os.ParcelFileDescriptor;
 import android.util.Log;
@@ -27,21 +30,27 @@ public class ScionTranslator implements Runnable {
         void onEstablish(ParcelFileDescriptor tunInterface);
     }
 
-    private static final int MAX_PACKET_SIZE = 8192;
+    private static final int MAX_PACKET_SIZE = 4096;
 
     private final VpnService mService;
     private final int mConnectionId;
     private InetSocketAddress mBind;
+    private String mBootstrapServer;
     private String mRemoteDaemon;
+    private boolean mConnectToDaemon;
 
     private PendingIntent mConfigureIntent;
     private OnEstablishListener mOnEstablishListener;
 
-    ScionTranslator(VpnService service, int connId, String bindAddress, int endHostPort, String daemon) {
+    ScionTranslator(VpnService service, int connId) {
         mService = service;
         mConnectionId = connId;
-        mBind = new InetSocketAddress(bindAddress, endHostPort);
-        mRemoteDaemon = daemon;
+
+        // TODO: Get configuration
+        mBind = new InetSocketAddress("192.168.200.25", 30041);
+        mBootstrapServer = "192.168.200.253:8041";
+        mRemoteDaemon = "192.168.200.253:30255";
+        mConnectToDaemon = true;
     }
 
     private final String getTag() {
@@ -58,11 +67,16 @@ public class ScionTranslator implements Runnable {
 
     @Override
     public void run() {
-        // Remotely connecting to a daemon seems like the easiest way to get something working.
         ScionService scionService;
-        Log.i(getTag(), String.format("Connecting to daemon at %s", mRemoteDaemon));
         try {
-            scionService = Scion.newServiceWithDaemon(mRemoteDaemon);
+            if (mConnectToDaemon) {
+                Log.i(getTag(), String.format("Connecting to daemon at %s", mRemoteDaemon));
+                scionService = Scion.newServiceWithDaemon(mRemoteDaemon);
+            }
+            else {
+                Log.i(getTag(), String.format("Bootstrapping from %s", mBootstrapServer));
+                scionService = Scion.newServiceWithBootstrapServer(mBootstrapServer);
+            }
         } catch (ScionRuntimeException e) {
             Log.e(getTag(), "Cannot connect SCION service", e);
             return;
@@ -82,7 +96,7 @@ public class ScionTranslator implements Runnable {
 
     private void runTranslation(ScionService scionService) throws IOException, InterruptedException {
         final String TAG = getTag();
-        JpanPathSelector pathSel = new JpanPathSelector(scionService);
+        JpanPathSelector pathSel = new JpanPathSelector(scionService, !mConnectToDaemon);
 
         // Configure TUN interface
         final long isdAsn = scionService.getLocalIsdAs();
@@ -122,18 +136,20 @@ public class ScionTranslator implements Runnable {
                 // IPv6 -> SCION
                 int length = tunIn.read(in.array());
                 if (length > 0) {
-                    Log.i(TAG, String.format("Received packet from TUN interface (%d bytes)", length));
+                    //Log.d(TAG, String.format("Received packet from TUN interface (%d bytes)", length));
                     in.limit(length);
 
-                    InetSocketAddress nextHop = Translator.translateEgress(in, out, mBind.getAddress(), pathSel);
+                    InetSocketAddress nextHop = Translator.translateEgress(
+                            in, out, mBind.getAddress(), mBind.getPort(), pathSel);
                     if (nextHop != null) {
                         if (nextHop.getAddress().getClass() == mBind.getAddress().getClass()) {
+                            //Log.d(TAG, "Output: " + Translator.hexdump(out.array(), out.limit()));
                             disp.send(out, nextHop);
                         } else {
-                            Log.e(TAG, "host address type mismatch");
+                            Log.d(TAG, "host address type mismatch");
                         }
                     } else {
-                        Log.e(TAG, "drop");
+                        //Log.d(TAG, "dropped packet");
                     }
 
                     in.clear();
@@ -143,14 +159,16 @@ public class ScionTranslator implements Runnable {
 
                 // SCION -> IPv6
                 SocketAddress from = disp.receive(in);
-                length = in.remaining();
                 if (from != null) {
-                    Log.i(TAG, String.format("Received packet from %s (%d bytes)", from, length));
+                    length = in.position();
+                    in.limit(length);
+                    //Log.d(TAG, String.format("Received packet from %s (%d bytes)", from, length));
 
                     if (Translator.translateIngress(in, out, tunAddr)) {
-                        tunOut.write(out.array(), 0, length);
+                        //Log.d(TAG, "Output: " + Translator.hexdump(out.array(), out.limit()));
+                        tunOut.write(out.array(), 0, out.limit());
                     } else {
-                        Log.e(TAG, "drop");
+                        //Log.d(TAG, "dropped packet");
                     }
 
                     in.clear();
@@ -170,7 +188,9 @@ public class ScionTranslator implements Runnable {
         builder.setBlocking(false);
         builder.setMtu(1280); // minimum for IPv6
         builder.addAddress(tunAddr, 64);
+        // TODO: Make sure everything not from fc00::/8 is still routed normally
         builder.addRoute("fc00::", 8);
+        builder.allowFamily(AF_INET);
         builder.setSession(String.format("AS%d-%d", ((isdAsn >> 48) & 0xffff), isdAsn & ~(~0 << 48)));
         builder.setConfigureIntent(mConfigureIntent);
 

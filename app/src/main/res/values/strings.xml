@@ -3,4 +3,9 @@
     <string name="disconnected">SCION-IP Translator disconnected</string>
     <string name="connecting">SCION-IP Translator connecting</string>
     <string name="connected">SCION-IP Translator connected</string>
+    <string name="bind_address">Bind Address</string>
+    <string name="endhost_port">SCION Host Port</string>
+    <string name="remote_daemon">Daemon Address and Port</string>
+    <string name="bootstrap_server">Bootstrap Server</string>
+    <string name="connect_to_daemon">Connect to exposed daemon</string>
 </resources>

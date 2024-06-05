@@ -2,11 +2,12 @@ package de.ovgu.netsys.scion_ip_translator.tra;
 
 import static java.lang.Byte.compareUnsigned;
 
+import android.util.Log;
+
 import androidx.annotation.NonNull;
 
 import org.scion.jpan.RequestPath;
 import org.scion.jpan.ResponsePath;
-import org.scion.jpan.internal.InternalConstants;
 import org.scion.jpan.internal.ScionHeaderParser;
 
 import java.net.Inet4Address;
@@ -18,11 +19,22 @@ import java.nio.ByteBuffer;
 import java.nio.ByteOrder;
 
 public class Translator {
+    private static final String TAG = Translator.class.getSimpleName();
     public static final long SCION_PREFIX = 0xfc;
     public static final int SCION_PREFIX_LEN = 8;
     public static final int SUBNET_BITS = 8;
     public static final byte NEXT_HDR_TCP = 6;
     public static final byte NEXT_HDR_UDP = 17;
+
+    public static String hexdump(byte[] bytes, int length) {
+        StringBuilder builder = new StringBuilder();
+        int i = 0;
+        for (byte b : bytes) {
+            if (i++ >= length) break;
+            builder.append(String.format("%02x", (int)b & 0xff));
+        }
+        return builder.toString();
+    }
 
     @NonNull
     public static Inet6Address mapIPv4(int isd, long asn, Inet4Address host) throws IllegalArgumentException {
@@ -84,7 +96,7 @@ public class Translator {
     }
 
     public static InetSocketAddress translateEgress(
-            ByteBuffer in, ByteBuffer out, InetAddress hostIp, PathSelector pathSel)
+            ByteBuffer in, ByteBuffer out, InetAddress hostIp, int hostPort, PathSelector pathSel)
     {
         if (in.remaining() < 44) return null; // IPv6 header + L4 ports
 
@@ -120,7 +132,8 @@ public class Translator {
         byte[] rawPath;
         if (remoteIsdAsn == localIsdAsn) {
             rawPath = new byte[0];
-            nextHop = new InetSocketAddress(dst, dstPort);
+            // nextHop = new InetSocketAddress(dst, dstPort);
+            nextHop = new InetSocketAddress(dst, hostPort);
         } else {
             RequestPath path = pathSel.lookup(remoteIsdAsn, ipHdr.dst, dstPort);
             if (path == null) return null;
@@ -133,27 +146,33 @@ public class Translator {
         }
 
         // New SCION packet
-        ScionHeaderParser.write(out,
+        ScionHdrParserMod.write(out,
                 in.remaining(),
                 rawPath.length,
                 localIsdAsn,
                 hostIp.getAddress(),
                 remoteIsdAsn,
                 dst.getAddress(),
-                InternalConstants.HdrTypes.UDP,
+                ipHdr.nextHeader,
                 0
         );
         ScionHeaderParser.writePath(out, rawPath);
         out.put(in); // L4 header and payload
 
+        out.limit(out.position());
+        out.position(0);
         return nextHop;
     }
 
     public static boolean translateIngress(ByteBuffer in, ByteBuffer out, Inet6Address tunIp) {
         // Parse SCION
-        if (ScionHeaderParser.validate(in) != null) {
+        /* FIXME: Validation fails for TCP packets (no support in JPAN)
+        String valErr = ScionHeaderParser.validate(in);
+        if (valErr != null) {
+            Log.i(TAG, "Packet validation error: " + valErr);
             return false;
         }
+        */
         final ResponsePath path = ScionHeaderParser.extractResponsePath(in, null);
         final byte nextHdr = in.get(4);
         if (nextHdr != NEXT_HDR_TCP && nextHdr != NEXT_HDR_UDP) return false;
@@ -183,20 +202,22 @@ public class Translator {
         if (!dst.equals(tunIp)) return false;
 
         // Create nex IPv6 header
+        in.position(ScionHeaderParser.extractHeaderLength(in));
         IPv6Header ipHdr = new IPv6Header();
         ipHdr.version = 6;
         ipHdr.trafficClass = 0;
         ipHdr.flowLabel = 0;
-        ipHdr.payloadLength = 0;
+        ipHdr.payloadLength = (short) (in.limit() - in.position());
         ipHdr.nextHeader = nextHdr;
         ipHdr.hopLimit = 64;
         ipHdr.src = src;
         ipHdr.dst = dst;
         ipHdr.write(out);
         // Copy L4 header and payload
-        in.position(ScionHeaderParser.extractHeaderLength(in));
         out.put(in);
 
+        out.limit(out.position());
+        out.position(0);
         return true;
     }
 }

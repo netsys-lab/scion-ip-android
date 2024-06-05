@@ -85,7 +85,7 @@ public class TranslatorTest extends TestCase {
         InetSocketAddress nextHop = Translator.translateEgress(in, out, host, pathSel);
 
         assertEquals(new InetSocketAddress(Inet4Address.getByName("10.0.2.16"), 80), nextHop);
-        assertEquals(12 + 24 + 8 + 4, out.position());
+        assertEquals(12 + 24 + 8 + 4, out.limit());
     }
 
     static final byte[] ingressScion = {
@@ -110,6 +110,6 @@ public class TranslatorTest extends TestCase {
         Inet6Address tunIP = Translator.mapIPv4(1, 0xfc00L, host);
 
         assertTrue(Translator.translateIngress(in, out, tunIP));
-        assertEquals(40 + 8 + 4, out.position());
+        assertEquals(40 + 8 + 4, out.limit());
     }
 }

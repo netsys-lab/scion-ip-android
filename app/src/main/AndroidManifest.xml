@@ -6,6 +6,7 @@
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_SPECIAL_USE" />
     <uses-permission android:name="android.permission.INTERNET" />
 
+    <!-- TODO: Disable cleartext traffic! (enabled for CS API) -->
     <application
         android:allowBackup="true"
         android:dataExtractionRules="@xml/data_extraction_rules"
@@ -15,6 +16,7 @@
         android:roundIcon="@drawable/scion_logo_gradient"
         android:supportsRtl="true"
         android:theme="@style/Theme.SCIONIPTranslator"
+        android:usesCleartextTraffic="true"
         tools:targetApi="31">
         <service
             android:name=".ScionTranslatorService"

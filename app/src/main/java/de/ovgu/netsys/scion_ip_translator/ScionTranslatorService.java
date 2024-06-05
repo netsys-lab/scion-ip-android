@@ -72,15 +72,8 @@ public class ScionTranslatorService extends VpnService implements Handler.Callba
         updateForegroundNotification(R.string.connecting);
         mHandler.sendEmptyMessage(R.string.connecting);
 
-        // Extract information from the shared preferences.
-        final SharedPreferences prefs = getSharedPreferences(MainActivity.Prefs.NAME, MODE_PRIVATE);
-        final String bindAddress = prefs.getString(MainActivity.Prefs.BIND_ADDRESS, "10.0.2.15");
-        final int endHostPort = prefs.getInt(MainActivity.Prefs.END_HOST_PORT, 30041);
-        final String daemon = prefs.getString(MainActivity.Prefs.DAEMON, "10.0.2.2:30255");
-
         startTranslation(new ScionTranslator(
-                this, mNextConnectionId.getAndIncrement(),
-                bindAddress, endHostPort, daemon));
+                this, mNextConnectionId.getAndIncrement()));
     }
 
     private void startTranslation(final ScionTranslator translator) {

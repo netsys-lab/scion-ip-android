@@ -15,9 +15,12 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material3.Button
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextField
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -27,19 +30,14 @@ import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
+import androidx.compose.runtime.getValue;
+import androidx.compose.runtime.setValue;
+import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.text.input.KeyboardType
 import de.ovgu.netsys.scion_ip_translator.ui.theme.SCIONIPTranslatorTheme
 
 
 class MainActivity : ComponentActivity() {
-    interface Prefs {
-        companion object {
-            const val NAME: String = "connection"
-            const val BIND_ADDRESS: String = "bind_address";
-            const val END_HOST_PORT: String = "end_host_port";
-            const val DAEMON: String = "daemon"
-        }
-    }
-
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
@@ -48,17 +46,11 @@ class MainActivity : ComponentActivity() {
                 Content(this)
             }
         }
-
-        // TODO: Edit preferences
-        val prefs = getSharedPreferences(Prefs.NAME, MODE_PRIVATE)
-        val bindAddress = prefs.getString(Prefs.BIND_ADDRESS, "10.0.2.15");
-        val endHostPort = prefs.getInt(Prefs.END_HOST_PORT, 30041);
-        val daemon = prefs.getString(Prefs.DAEMON, "10.0.2.2:30255");
     }
 
     @Preview(showBackground = true)
     @Composable
-    fun GreetingPreview() {
+    fun Preview() {
         SCIONIPTranslatorTheme {
             Content(this)
         }
@@ -91,17 +83,22 @@ class MainActivity : ComponentActivity() {
 
 @Composable
 fun Content(activity: MainActivity) {
-    val active = remember { mutableStateOf(false) }
+    var active by remember { mutableStateOf(false) }
+    var bindAddress by remember { mutableStateOf("192.168.200.25") }
+    var endhostPort by remember { mutableStateOf("30041") }
+    var bootstrapServer by remember { mutableStateOf("192.168.200.253:8041") }
+    var connectToDaemon by remember { mutableStateOf(true) }
+    var remoteDaemon by remember { mutableStateOf("192.168.200.253:30255") }
     Scaffold(modifier = Modifier.fillMaxSize()) { innerPadding -> (
             Column(
-                modifier = Modifier.padding(innerPadding)
+                horizontalAlignment = Alignment.CenterHorizontally,
+                verticalArrangement = Arrangement.spacedBy(20.dp),
+                modifier = Modifier.padding(innerPadding).fillMaxWidth(),
             ) {
                 Row(
                     verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.Center,
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(innerPadding)
+                    modifier = Modifier.fillMaxWidth()
                 ) {
                     Image(
                         painter = painterResource(id = R.drawable.scion_logo_gradient_notagline),
@@ -115,13 +112,46 @@ fun Content(activity: MainActivity) {
                         )
                     }
                 }
+                TextField(
+                    value = bindAddress,
+                    onValueChange = { bindAddress = it },
+                    label = { Text(stringResource(R.string.bind_address)) }
+                )
+                TextField(
+                    value = endhostPort,
+                    onValueChange = { endhostPort = it },
+                    label = { Text(stringResource(R.string.endhost_port)) },
+                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number)
+                )
+                TextField(
+                    value = bootstrapServer,
+                    onValueChange = { bootstrapServer = it },
+                    label = { Text(stringResource(R.string.bootstrap_server)) }
+                )
+                TextField(
+                    value = remoteDaemon,
+                    onValueChange = { remoteDaemon = it },
+                    label = { Text(stringResource(R.string.remote_daemon)) }
+                )
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(15.dp),
+                ) {
+                    Switch(
+                        checked = connectToDaemon,
+                        onCheckedChange = {
+                            connectToDaemon = it
+                        }
+                    )
+                    Text(text=stringResource(R.string.connect_to_daemon))
+                }
                 Row(
                     horizontalArrangement = Arrangement.Center,
                     modifier = Modifier.fillMaxSize()
                 ) {
-                    ConnectButton(active.value) {
-                        active.value = !active.value
-                        if (active.value) {
+                    ConnectButton(active) {
+                        active = !active
+                        if (active) {
                             activity.enableTranslator()
                         } else {
                             activity.disableTranslator()

@@ -34,23 +34,14 @@ public class ScionTranslator implements Runnable {
 
     private final VpnService mService;
     private final int mConnectionId;
-    private InetSocketAddress mBind;
-    private String mBootstrapServer;
-    private String mRemoteDaemon;
-    private boolean mConnectToDaemon;
-
+    private Configuration config;
     private PendingIntent mConfigureIntent;
     private OnEstablishListener mOnEstablishListener;
 
     ScionTranslator(VpnService service, int connId) {
         mService = service;
         mConnectionId = connId;
-
-        // TODO: Get configuration
-        mBind = new InetSocketAddress("192.168.200.25", 30041);
-        mBootstrapServer = "192.168.200.253:8041";
-        mRemoteDaemon = "192.168.200.253:30255";
-        mConnectToDaemon = true;
+        config = ConfigurationManager.getConfiguration();
     }
 
     private final String getTag() {
@@ -68,17 +59,20 @@ public class ScionTranslator implements Runnable {
     @Override
     public void run() {
         ScionService scionService;
+        config = ConfigurationManager.getConfiguration();
         try {
-            if (mConnectToDaemon) {
-                Log.i(getTag(), String.format("Connecting to daemon at %s", mRemoteDaemon));
-                scionService = Scion.newServiceWithDaemon(mRemoteDaemon);
+            StatusManager.setTranslationStatus(TranslationStatus.CONNECTING);
+            if (config.getConnectToDaemon()) {
+                Log.i(getTag(), String.format("Connecting to daemon at %s", config.getRemoteDaemon()));
+                scionService = Scion.newServiceWithDaemon(config.getRemoteDaemon());
             }
             else {
-                Log.i(getTag(), String.format("Bootstrapping from %s", mBootstrapServer));
-                scionService = Scion.newServiceWithBootstrapServer(mBootstrapServer);
+                Log.i(getTag(), String.format("Bootstrapping from %s", config.getBootstrapServer()));
+                scionService = Scion.newServiceWithBootstrapServer(config.getBootstrapServer());
             }
         } catch (ScionRuntimeException e) {
             Log.e(getTag(), "Cannot connect SCION service", e);
+            StatusManager.setTranslationStatus(TranslationStatus.DISCONNECTED);
             return;
         }
 
@@ -91,13 +85,15 @@ public class ScionTranslator implements Runnable {
             Log.i(getTag(), "Translator exiting");
         } catch  (IOException | ScionRuntimeException e) {
             Log.e(getTag(), "Translator failed", e);
+        } finally {
+            StatusManager.setTranslationStatus(TranslationStatus.DISCONNECTED);
         }
     }
 
     private void runTranslation(ScionService scionService) throws IOException, InterruptedException {
         final String TAG = getTag();
-        JpanPathSelector pathSel = new JpanPathSelector(scionService, !mConnectToDaemon);
-
+        JpanPathSelector pathSel = new JpanPathSelector(scionService, !config.getConnectToDaemon());
+        InetSocketAddress mBind = new InetSocketAddress(config.getBindAddress(), Integer.parseInt(config.getEndhostPort()));
         // Configure TUN interface
         final long isdAsn = scionService.getLocalIsdAs();
         Inet6Address tunAddr;
@@ -111,6 +107,8 @@ public class ScionTranslator implements Runnable {
         Log.i(TAG, String.format("Bind address: %s", mBind));
         Log.i(TAG, String.format("TUN address: %s", tunAddr));
         final ParcelFileDescriptor tun = configureTun(isdAsn, tunAddr);
+
+        StatusManager.setIpAddress(tunAddr.getHostAddress());
 
         try (DatagramChannel disp = DatagramChannel.open()) {
             // Configure dispatcher socket
@@ -130,6 +128,9 @@ public class ScionTranslator implements Runnable {
             // Main loop
             ByteBuffer in = ByteBuffer.allocate(MAX_PACKET_SIZE);
             ByteBuffer out = ByteBuffer.allocate(MAX_PACKET_SIZE);
+            long startTime = System.currentTimeMillis();
+            StatusManager.setTranslationStatus(TranslationStatus.CONNECTED);
+            StatusManager.updateConnectionTime(0);
             while (true) {
                 boolean idle = true;
 
@@ -137,6 +138,7 @@ public class ScionTranslator implements Runnable {
                 int length = tunIn.read(in.array());
                 if (length > 0) {
                     //Log.d(TAG, String.format("Received packet from TUN interface (%d bytes)", length));
+                    StatusManager.updateUploadedBytes(length);
                     in.limit(length);
 
                     InetSocketAddress nextHop = Translator.translateEgress(
@@ -163,6 +165,7 @@ public class ScionTranslator implements Runnable {
                     length = in.position();
                     in.limit(length);
                     //Log.d(TAG, String.format("Received packet from %s (%d bytes)", from, length));
+                    StatusManager.updateDownloadedBytes(length);
 
                     if (Translator.translateIngress(in, out, tunAddr)) {
                         //Log.d(TAG, "Output: " + Translator.hexdump(out.array(), out.limit()));
@@ -179,6 +182,9 @@ public class ScionTranslator implements Runnable {
                 if (idle) {
                     Thread.sleep(100);
                 }
+                // Update connection time
+                long currentTime = System.currentTimeMillis();
+                StatusManager.updateConnectionTime(currentTime - startTime);
             }
         }
     }
@@ -191,6 +197,7 @@ public class ScionTranslator implements Runnable {
         // TODO: Make sure everything not from fc00::/8 is still routed normally
         builder.addRoute("fc00::", 8);
         builder.allowFamily(AF_INET);
+        builder.addRoute("::", 0);
         builder.setSession(String.format("AS%d-%d", ((isdAsn >> 48) & 0xffff), isdAsn & ~(~0 << 48)));
         builder.setConfigureIntent(mConfigureIntent);
 

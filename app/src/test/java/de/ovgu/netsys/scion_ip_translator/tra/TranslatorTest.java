@@ -82,9 +82,9 @@ public class TranslatorTest extends TestCase {
 
         InetAddress host = Inet4Address.getByName("10.0.2.15");
         PathSelector pathSel = new MockPathSelector();
-        InetSocketAddress nextHop = Translator.translateEgress(in, out, host, pathSel);
+        InetSocketAddress nextHop = Translator.translateEgress(in, out, host, 30041, pathSel);
 
-        assertEquals(new InetSocketAddress(Inet4Address.getByName("10.0.2.16"), 80), nextHop);
+        assertEquals(new InetSocketAddress(Inet4Address.getByName("10.0.2.16"), 30041), nextHop);
         assertEquals(12 + 24 + 8 + 4, out.limit());
     }
 

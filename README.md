@@ -14,7 +14,6 @@ Uses [JPAN] for packet parsing and to connect to a SCION daemon.
 
 TODO:
 - Determine correct bind IP automatically
-- Upgrade to JPAN 0.2.0
 - Better error handling
 - Configure routes properly, don't block non-SCION traffic
 - Improve performance
@@ -24,6 +23,9 @@ TODO:
 - Path monitoring and policy UI
 - Handling of ICMP and SCMP
 - Support for dispatcherless border router
+
+Note:
+This prototype will be replaced by an app derived from the desktop version of the SCION-IP Translator.
 
 Demo
 ----

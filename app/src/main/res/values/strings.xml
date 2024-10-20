@@ -8,4 +8,6 @@
     <string name="remote_daemon">Daemon Address and Port</string>
     <string name="bootstrap_server">Bootstrap Server</string>
     <string name="connect_to_daemon">Connect to exposed daemon</string>
+    <string name="dns_server">DNS Server</string>
+    <string name="override_dns">Override DNS</string>
 </resources>

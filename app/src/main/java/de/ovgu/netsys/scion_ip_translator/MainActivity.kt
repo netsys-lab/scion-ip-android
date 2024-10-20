@@ -61,6 +61,12 @@ import androidx.compose.ui.unit.sp
 import androidx.compose.ui.text.font.FontWeight
 import kotlinx.coroutines.launch
 import org.intellij.lang.annotations.JdkConstants.HorizontalAlignment
+import org.scion.jpan.ScionAddress
+import org.scion.jpan.ScionUtil
+import java.net.Inet4Address
+import java.net.InterfaceAddress
+import java.net.NetworkInterface
+import java.util.Collections
 import kotlin.math.ln
 import kotlin.math.pow
 import kotlin.text.*
@@ -110,29 +116,36 @@ class MainActivity : ComponentActivity() {
     }
 }
 
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun Content(activity: MainActivity) {
     val configuration = ConfigurationManager.configuration
     val status by StatusManager.statusFlow.collectAsState(initial = Status())
+    val hostAddresses = getDeviceIPs()
 
-
+    var bindAddrExpanded by remember { mutableStateOf(false) }
     var bindAddress by remember { mutableStateOf(configuration.bindAddress) }
     var endhostPort by remember { mutableStateOf(configuration.endhostPort) }
     var bootstrapServer by remember { mutableStateOf(configuration.bootstrapServer) }
     var connectToDaemon by remember { mutableStateOf(configuration.connectToDaemon) }
     var remoteDaemon by remember { mutableStateOf(configuration.remoteDaemon) }
+    var overrideDns by remember { mutableStateOf(configuration.overrideDns) }
+    var dnsServer by remember { mutableStateOf(configuration.dnsServer) }
     var active by remember { mutableStateOf(false) }
 
     var bindAddressError by remember { mutableStateOf<String?>(null) }
     var endhostPortError by remember { mutableStateOf<String?>(null) }
     var bootstrapServerError by remember { mutableStateOf<String?>(null) }
     var remoteDaemonError by remember { mutableStateOf<String?>(null) }
+    var dnsServerError by remember { mutableStateOf<String?>(null) }
 
     Scaffold(modifier = Modifier.fillMaxSize()) { innerPadding -> (
             Column(
                 horizontalAlignment = Alignment.CenterHorizontally,
                 verticalArrangement = Arrangement.spacedBy(16.dp),
-                modifier = Modifier.padding(innerPadding).fillMaxWidth(),
+                modifier = Modifier
+                    .padding(innerPadding)
+                    .fillMaxWidth(),
             ) {
                 Row(
                     verticalAlignment = Alignment.CenterVertically,
@@ -151,16 +164,40 @@ fun Content(activity: MainActivity) {
                         )
                     }
                 }
-                TextField(
-                    value = bindAddress,
-                    onValueChange = {
-                        bindAddress = it
-                        bindAddressError = if (isValidHost(it)) null else "Invalid host"
-                        configuration.bindAddress = it
-                    },
-                    label = { Text(stringResource(R.string.bind_address)) },
-                    isError = bindAddressError != null
-                )
+                ExposedDropdownMenuBox(
+                    expanded = bindAddrExpanded,
+                    onExpandedChange = {
+                        bindAddrExpanded = !bindAddrExpanded
+                    }) {
+                        TextField(
+                            readOnly = true,
+                            value = bindAddress,
+                            onValueChange = {},
+                            label = { Text(stringResource(R.string.bind_address)) },
+                            trailingIcon = {
+                                ExposedDropdownMenuDefaults.TrailingIcon(
+                                    expanded = bindAddrExpanded
+                                )
+                            },
+                            modifier = Modifier.menuAnchor(),
+                            isError = bindAddress == ""
+                        )
+                        ExposedDropdownMenu(
+                            expanded = bindAddrExpanded,
+                            onDismissRequest = { bindAddrExpanded = false }
+                        ) {
+                            hostAddresses.forEach { s ->
+                                DropdownMenuItem(
+                                    text = { Text(text = s) },
+                                    onClick = {
+                                        bindAddress = s
+                                        configuration.bindAddress = s
+                                        bindAddrExpanded = false
+                                    }
+                                )
+                            }
+                        }
+                }
                 TextField(
                     value = endhostPort,
                     onValueChange = {
@@ -194,18 +231,48 @@ fun Content(activity: MainActivity) {
                     isError = remoteDaemonError != null,
                     enabled = connectToDaemon
                 )
-                Row(
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(15.dp),
+                TextField(
+                    value = dnsServer,
+                    onValueChange = {
+                        dnsServer = it
+                        dnsServerError = if (isValidScionHost(it)) null else "Invalid address"
+                        configuration.dnsServer = it
+                    },
+                    label = { Text(stringResource(R.string.dns_server)) },
+                    isError = dnsServerError != null,
+                    enabled = overrideDns,
+                )
+                Column(
+                    horizontalAlignment = Alignment.Start,
+                    verticalArrangement = Arrangement.spacedBy(16.dp),
+                    modifier = Modifier.padding(innerPadding),
                 ) {
-                    Switch(
-                        checked = connectToDaemon,
-                        onCheckedChange = {
-                            connectToDaemon = it
-                            configuration.connectToDaemon = it
-                        }
-                    )
-                    Text(text=stringResource(R.string.connect_to_daemon))
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(15.dp),
+                    ) {
+                        Switch(
+                            checked = connectToDaemon,
+                            onCheckedChange = {
+                                connectToDaemon = it
+                                configuration.connectToDaemon = it
+                            }
+                        )
+                        Text(text = stringResource(R.string.connect_to_daemon))
+                    }
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(15.dp),
+                    ) {
+                        Switch(
+                            checked = overrideDns,
+                            onCheckedChange = {
+                                overrideDns = it
+                                configuration.overrideDns = it
+                            }
+                        )
+                        Text(text = stringResource(R.string.override_dns))
+                    }
                 }
                 Row(
                     horizontalArrangement = Arrangement.Center,
@@ -260,7 +327,13 @@ fun StatusDisplay(status: Status) {
                         if (StatusManager.status.translationStatus == TranslationStatus.CONNECTED) {
                             coroutineScope.launch {
                                 clipboardManager.setText(AnnotatedString(StatusManager.status.ipAddress))
-                                Toast.makeText(context, "IP Address copied to clipboard", Toast.LENGTH_SHORT).show()
+                                Toast
+                                    .makeText(
+                                        context,
+                                        "IP Address copied to clipboard",
+                                        Toast.LENGTH_SHORT
+                                    )
+                                    .show()
                             }
                         }
                     }
@@ -379,4 +452,34 @@ fun isValidServerAddress(address: String): Boolean {
     val ipHost = parts.first
     val port = parts.second
     return isValidHost(ipHost) && isValidPort(port)
+}
+
+fun parseScionHost(address: String): Pair<Long, InetAddress> {
+    if (address.contains(",")) {
+        val parts = address.split(",")
+        if (parts.size == 2) {
+            return Pair(ScionUtil.parseIA(parts[0]), Inet4Address.getByName(parts[1]))
+        }
+    }
+    throw IllegalArgumentException("invalid SCION host address, value = $address")
+}
+
+fun isValidScionHost(address: String): Boolean {
+    try {
+        parseScionHost(address)
+        return true
+    }
+    catch (e: Exception) {
+        return false
+    }
+}
+
+fun getDeviceIPs(): ArrayList<String> {
+    val ips = ArrayList<String>();
+    for (netif: NetworkInterface in NetworkInterface.getNetworkInterfaces()) {
+        for (addr: InterfaceAddress in netif.interfaceAddresses) {
+            ips.add(addr.address.toString().substring(1));
+        }
+    }
+    return ips;
 }

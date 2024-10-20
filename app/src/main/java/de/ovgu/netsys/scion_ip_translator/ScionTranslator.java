@@ -2,8 +2,10 @@ package de.ovgu.netsys.scion_ip_translator;
 
 import static android.system.OsConstants.AF_INET;
 
+import static de.ovgu.netsys.scion_ip_translator.MainActivityKt.parseScionHost;
+import static de.ovgu.netsys.scion_ip_translator.tra.Translator.mapIPv4;
+
 import android.app.PendingIntent;
-import android.content.SharedPreferences;
 import android.net.VpnService;
 import android.os.ParcelFileDescriptor;
 import android.util.Log;
@@ -17,6 +19,7 @@ import java.io.FileOutputStream;
 import java.io.IOException;
 import java.net.Inet4Address;
 import java.net.Inet6Address;
+import java.net.InetAddress;
 import java.net.InetSocketAddress;
 import java.net.SocketAddress;
 import java.nio.ByteBuffer;
@@ -24,6 +27,8 @@ import java.nio.channels.DatagramChannel;
 
 import de.ovgu.netsys.scion_ip_translator.tra.JpanPathSelector;
 import de.ovgu.netsys.scion_ip_translator.tra.Translator;
+import kotlin.NotImplementedError;
+import kotlin.Pair;
 
 public class ScionTranslator implements Runnable {
     public interface OnEstablishListener {
@@ -94,11 +99,29 @@ public class ScionTranslator implements Runnable {
         final String TAG = getTag();
         JpanPathSelector pathSel = new JpanPathSelector(scionService, !config.getConnectToDaemon());
         InetSocketAddress mBind = new InetSocketAddress(config.getBindAddress(), Integer.parseInt(config.getEndhostPort()));
+        InetAddress dnsServer = null;
+        if (config.getOverrideDns()) {
+            try {
+                Pair<Long, InetAddress> dns = parseScionHost(config.getDnsServer());
+                int isd = (int) (dns.component1() >> 48);
+                long asn = dns.component1() & ~(~((long)0) << 48);
+                if (dns.component2() instanceof Inet4Address) {
+                    Inet4Address host = (Inet4Address) (dns.component2());
+                    dnsServer = mapIPv4(isd, asn, host);
+                } else if (dns.component2() instanceof Inet6Address) {
+                    Inet6Address host = (Inet6Address) (dns.component2());
+                    throw new NotImplementedError();
+                }
+            }
+            catch (Exception e) {
+                dnsServer = null;
+            }
+        }
         // Configure TUN interface
         final long isdAsn = scionService.getLocalIsdAs();
         Inet6Address tunAddr;
         if (mBind.getAddress() instanceof Inet4Address) {
-            tunAddr = Translator.mapIPv4(
+            tunAddr = mapIPv4(
                     (int)((isdAsn >> 48) & 0xffff), isdAsn & ~(~0 << 48),
                     (Inet4Address) mBind.getAddress());
         } else {
@@ -106,7 +129,7 @@ public class ScionTranslator implements Runnable {
         }
         Log.i(TAG, String.format("Bind address: %s", mBind));
         Log.i(TAG, String.format("TUN address: %s", tunAddr));
-        final ParcelFileDescriptor tun = configureTun(isdAsn, tunAddr);
+        final ParcelFileDescriptor tun = configureTun(isdAsn, tunAddr, dnsServer);
 
         StatusManager.setIpAddress(tunAddr.getHostAddress());
 
@@ -189,7 +212,7 @@ public class ScionTranslator implements Runnable {
         }
     }
 
-    private ParcelFileDescriptor configureTun(long isdAsn, Inet6Address tunAddr) {
+    private ParcelFileDescriptor configureTun(long isdAsn, Inet6Address tunAddr, InetAddress dnsServer) {
         ScionTranslatorService.Builder builder = mService.new Builder();
         builder.setBlocking(false);
         builder.setMtu(1280); // minimum for IPv6
@@ -198,6 +221,7 @@ public class ScionTranslator implements Runnable {
         builder.addRoute("fc00::", 8);
         builder.allowFamily(AF_INET);
         builder.addRoute("::", 0);
+        if (dnsServer != null) builder.addDnsServer(dnsServer);
         builder.setSession(String.format("AS%d-%d", ((isdAsn >> 48) & 0xffff), isdAsn & ~(~0 << 48)));
         builder.setConfigureIntent(mConfigureIntent);
 
